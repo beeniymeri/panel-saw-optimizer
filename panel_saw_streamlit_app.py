@@ -196,9 +196,9 @@ def export_opal2070(parts: List[Piece],
     for (L, B, gf), q in agg.items():
         lines.append(
             f"E {seq} {idx} \"1\" {q} {L} {B} 0 0 0 0 0 0 0 0 2 2 2 2 {L} {B} 1 1 {gf} "
-            + "\"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" "
+            + "\"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" "
             + f"\"{date_str}\" \"1010\" 0 0 0 0 6 6 6 6 3 3 3 3 "
-            + "\"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" 0 0 0 0 0 0 0 0"
+            + "\"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" 0 0 0 0 0 0 0 0"
         )
         seq += 1
         idx += 1
@@ -278,7 +278,7 @@ def export_panhans_ncr(parts: List[Piece],
         lines.append(
             f'I{idx} Z{idx} L{L} B{B} H{L} W{B} s{q} u\"\" p\"1\" z\"\" v\"\" h\"\" l\"\" r\"\" i\"\" a\"\" w\"{date_dmy}\" '
             + 'd0 0 0 0 k2 2 2 2 K6 6 6 6 3 3 3 3 S00000 U0 0 0 0 F\"01000\" E\"{0}\" x\"\" '
-            + '\"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" g0 0 0 0 0 0 0 0 t0 0 0 0 '
+            + '\"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" g0 0 0 0 0 0 0 0 t0 0 0 0 '
             + f'o{q} e'
         )
         idx += 1
@@ -307,7 +307,7 @@ with st.sidebar.expander("Opal2070 export options"):
     st.caption("Header values and trim cuts (mm)")
     auto_swap = st.checkbox("Auto swap panel L/W (mirror orientation)", value=True)
     force_length_along_feed = st.checkbox("Force part length along feed direction", value=True)
-    # Use safe defaults; you can change these as needed
+    # Safe defaults; can be adjusted
     default_len = 28000
     default_wid = 20700
     opal_len = st.number_input("Panel length (mm)", value=default_len, step=10)
@@ -329,8 +329,8 @@ Sheets CSV columns: `id,width_mm,height_mm,qty[,material,thickness_mm]`
 """)
 
 # Example CSV text
-example_parts_text = "id,width_mm,height_mm,qty,grain_locked,material,thickness_mm\\nA,800,600,2,True,MDF,18\\nB,400,300,6,False,Particleboard,18\\nC,1200,500,1,True,MDF,18\\nD,600,400,3,False,Plywood,12\\n"
-example_sheets_text = "id,width_mm,height_mm,qty,material,thickness_mm\\nSHEET_1,2440,1220,3,Particleboard,18\\nSHEET_2,2800,2070,1,MDF,18\\n"
+example_parts_text = "id,width_mm,height_mm,qty,grain_locked,material,thickness_mm\nA,800,600,2,True,MDF,18\nB,400,300,6,False,Particleboard,18\nC,1200,500,1,True,MDF,18\nD,600,400,3,False,Plywood,12\n"
+example_sheets_text = "id,width_mm,height_mm,qty,material,thickness_mm\nSHEET_1,2440,1220,3,Particleboard,18\nSHEET_2,2800,2070,1,MDF,18\n"
 
 col1, col2 = st.columns(2)
 with col1:
@@ -384,9 +384,9 @@ def parse_sheets_csv(file) -> List[Sheet]:
     return sheets
 
 def parse_remnants_csv(file):
-    \"\"\"Return a list of dicts with keys:
+    """Return a list of dicts with keys:
        id (optional), width_mm, height_mm, qty, material (optional), thickness_mm (optional)
-    \"\"\"
+    """
     import csv as _csv, io as _io
     if hasattr(file, 'read'):
         text = file.read().decode('utf-8')
@@ -407,9 +407,9 @@ def parse_remnants_csv(file):
     return rems
 
 # Load defaults if no upload
-if not 'parts' in st.session_state:
+if 'parts' not in st.session_state:
     st.session_state.parts = None
-if not 'sheets' in st.session_state:
+if 'sheets' not in st.session_state:
     st.session_state.sheets = None
 
 if not uploaded_parts:
@@ -458,7 +458,8 @@ if run_btn:
         part_meta = {pp.id: (pp.material, pp.thickness_mm) for pp in parts}
         for p in placements:
             mat_th = part_meta.get(_base_id3(p.piece_id), ("", None))
-            smt = sheet_meta.get(p.sheet_id.split('_')[0], sheet_meta.get(p.sheet_id, ("", None)))
+            base_sid = p.sheet_id.split('_')[0]
+            smt = sheet_meta.get(base_sid, sheet_meta.get(p.sheet_id, ("", None)))
             if (mat_th[0] and mat_th[0].strip()) and (mat_th[0].strip() != (smt[0] or '').strip()):
                 mism.append(p.piece_id)
             if (mat_th[1] is not None) and (mat_th[1] != smt[1]):
@@ -477,7 +478,6 @@ if run_btn:
         for s in sheets:
             sheet_meta[s.id] = (getattr(s, 'material',''), getattr(s, 'thickness_mm', None))
         for p in placements:
-            # try matching by base sheet id before instance suffix
             base_sid = p.sheet_id.split('_')[0]
             mat, th = sheet_meta.get(base_sid, sheet_meta.get(p.sheet_id, ('','')))
             key = f"{mat} / {'' if th is None else str(int(th))+'mm'}"
