@@ -1,9 +1,12 @@
+
 import streamlit as st
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 import csv
 import io
 from collections import Counter
+import pandas as pd
+import zipfile
 
 # ---------- Data classes ----------
 @dataclass
@@ -102,7 +105,7 @@ def optimize(pieces: List[Piece], sheets: List[Sheet], kerf=3.0, allow_rotation_
     singles = []
     for p in pieces:
         for i in range(max(1, p.qty)):
-            singles.append(Piece(p.id + f"_{i+1}", p.w, p.h, qty=1, grain_locked=p.grain_locked))
+            singles.append(Piece(p.id + f"_{i+1}", p.w, p.h, qty=1, grain_locked=p.grain_locked, material=p.material, thickness_mm=p.thickness_mm))
     singles.sort(key=lambda z: (max(z.w, z.h), z.w * z.h), reverse=True)
 
     placements: List[Placement] = []
@@ -137,15 +140,13 @@ def optimize(pieces: List[Piece], sheets: List[Sheet], kerf=3.0, allow_rotation_
 
     # Collect remnant rectangles (free spaces) from each bin
     remnants: List[Tuple[str, float, float]] = []
-    for bin_obj, sid in bins:
+    for bin_obj, sid, _smat, _sth in bins:
         for r in getattr(bin_obj, 'free', []):
             if r.w > 0.5 and r.h > 0.5:  # avoid tiny slivers
                 remnants.append((sid, float(r.w), float(r.h)))
     return placements, list(unplaced_summary.items()), remnants
 
 # ---------- CSV / SVG helpers ----------
-
-
 def export_opal2070(parts: List[Piece],
                     sheets: List[Sheet],
                     panel_len: int,
@@ -276,7 +277,7 @@ def export_panhans_ncr(parts: List[Piece],
     for (L, B), q in agg.items():
         lines.append(
             f'I{idx} Z{idx} L{L} B{B} H{L} W{B} s{q} u\"\" p\"1\" z\"\" v\"\" h\"\" l\"\" r\"\" i\"\" a\"\" w\"{date_dmy}\" '
-            + 'd0 0 0 0 k2 2 2 2 K6 6 6 6 3 3 3 3 S00000 U0 0 0 0 F\"01000\" E\"{0}\" x\"\" '  # E\"{0}\" left literal like sample
+            + 'd0 0 0 0 k2 2 2 2 K6 6 6 6 3 3 3 3 S00000 U0 0 0 0 F\"01000\" E\"{0}\" x\"\" '
             + '\"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" \"\" g0 0 0 0 0 0 0 0 t0 0 0 0 '
             + f'o{q} e'
         )
@@ -292,18 +293,23 @@ st.title("Panel Saw Cutting Optimizer — Guillotine 2D with Grain Lock")
 
 with st.sidebar:
     st.header("Inputs")
-    uploaded_parts = st.file_uploader("Upload parts CSV (id,width_mm,height_mm,qty,grain_locked)", type=["csv"])
-    uploaded_sheets = st.file_uploader("Upload sheets CSV (id,width_mm,height_mm,qty)", type=["csv"])
+    uploaded_parts = st.file_uploader("Upload parts CSV (id,width_mm,height_mm,qty,grain_locked[,material,thickness_mm])", type=["csv"])
+    uploaded_sheets = st.file_uploader("Upload sheets CSV (id,width_mm,height_mm,qty[,material,thickness_mm])", type=["csv"])
     kerf = st.number_input("Kerf (mm)", value=3.0, min_value=0.0, step=0.1)
     allow_rotation_global = st.checkbox("Allow rotation globally", value=True)
     run_btn = st.button("Run optimizer")
+
+with st.sidebar.expander("Remnants filter"):
+    min_remnant_w = st.number_input("Min remnant width (mm)", value=50.0, step=1.0)
+    min_remnant_h = st.number_input("Min remnant height (mm)", value=50.0, step=1.0)
 
 with st.sidebar.expander("Opal2070 export options"):
     st.caption("Header values and trim cuts (mm)")
     auto_swap = st.checkbox("Auto swap panel L/W (mirror orientation)", value=True)
     force_length_along_feed = st.checkbox("Force part length along feed direction", value=True)
-    default_len = int(sheets[0].w) if sheets else 28000
-    default_wid = int(sheets[0].h) if sheets else 20700
+    # Use safe defaults; you can change these as needed
+    default_len = 28000
+    default_wid = 20700
     opal_len = st.number_input("Panel length (mm)", value=default_len, step=10)
     opal_wid = st.number_input("Panel width (mm)", value=default_wid, step=10)
     opal_priority = st.number_input("Priority", value=100, step=1)
@@ -315,7 +321,6 @@ with st.sidebar.expander("Opal2070 export options"):
         opal_trim_L2 = st.number_input("Trim length side 2 (mm)", value=0, step=1)
         opal_trim_W2 = st.number_input("Trim width side 2 (mm)", value=0, step=1)
 
-
 st.markdown("""
 **CSV format examples**
 
@@ -324,8 +329,8 @@ Sheets CSV columns: `id,width_mm,height_mm,qty[,material,thickness_mm]`
 """)
 
 # Example CSV text
-example_parts_text = "id,width_mm,height_mm,qty,grain_locked,material,thickness_mm\nA,800,600,2,True,MDF,18\nB,400,300,6,False,Particleboard,18\nC,1200,500,1,True,MDF,18\nD,600,400,3,False,Plywood,12\n"
-example_sheets_text = "id,width_mm,height_mm,qty,material,thickness_mm\nSHEET_1,2440,1220,3,Particleboard,18\nSHEET_2,2800,2070,1,MDF,18\n"
+example_parts_text = "id,width_mm,height_mm,qty,grain_locked,material,thickness_mm\\nA,800,600,2,True,MDF,18\\nB,400,300,6,False,Particleboard,18\\nC,1200,500,1,True,MDF,18\\nD,600,400,3,False,Plywood,12\\n"
+example_sheets_text = "id,width_mm,height_mm,qty,material,thickness_mm\\nSHEET_1,2440,1220,3,Particleboard,18\\nSHEET_2,2800,2070,1,MDF,18\\n"
 
 col1, col2 = st.columns(2)
 with col1:
@@ -378,18 +383,16 @@ def parse_sheets_csv(file) -> List[Sheet]:
         ))
     return sheets
 
-
-
 def parse_remnants_csv(file):
-    """Return a list of dicts with keys:
+    \"\"\"Return a list of dicts with keys:
        id (optional), width_mm, height_mm, qty, material (optional), thickness_mm (optional)
-    """
-    import csv, io
+    \"\"\"
+    import csv as _csv, io as _io
     if hasattr(file, 'read'):
         text = file.read().decode('utf-8')
     else:
         text = file
-    reader = csv.DictReader(io.StringIO(text))
+    reader = _csv.DictReader(_io.StringIO(text))
     rems = []
     for r in reader:
         rec = {
@@ -404,18 +407,25 @@ def parse_remnants_csv(file):
     return rems
 
 # Load defaults if no upload
+if not 'parts' in st.session_state:
+    st.session_state.parts = None
+if not 'sheets' in st.session_state:
+    st.session_state.sheets = None
+
 if not uploaded_parts:
     st.info("No parts CSV uploaded — using example data.")
     parts = parse_parts_csv(example_parts_text)
 else:
     uploaded_parts.seek(0)
     parts = parse_parts_csv(uploaded_parts)
+st.session_state.parts = parts
 
 if not uploaded_sheets:
     sheets = parse_sheets_csv(example_sheets_text)
 else:
     uploaded_sheets.seek(0)
     sheets = parse_sheets_csv(uploaded_sheets)
+st.session_state.sheets = sheets
 
 # Show preview
 st.subheader("Parts (preview)")
@@ -448,7 +458,7 @@ if run_btn:
         part_meta = {pp.id: (pp.material, pp.thickness_mm) for pp in parts}
         for p in placements:
             mat_th = part_meta.get(_base_id3(p.piece_id), ("", None))
-            smt = sheet_meta.get(p.sheet_id, ("", None))
+            smt = sheet_meta.get(p.sheet_id.split('_')[0], sheet_meta.get(p.sheet_id, ("", None)))
             if (mat_th[0] and mat_th[0].strip()) and (mat_th[0].strip() != (smt[0] or '').strip()):
                 mism.append(p.piece_id)
             if (mat_th[1] is not None) and (mat_th[1] != smt[1]):
@@ -467,16 +477,19 @@ if run_btn:
         for s in sheets:
             sheet_meta[s.id] = (getattr(s, 'material',''), getattr(s, 'thickness_mm', None))
         for p in placements:
-            mat, th = sheet_meta.get(p.sheet_id.split('_')[0], sheet_meta.get(p.sheet_id, ('','')))
+            # try matching by base sheet id before instance suffix
+            base_sid = p.sheet_id.split('_')[0]
+            mat, th = sheet_meta.get(base_sid, sheet_meta.get(p.sheet_id, ('','')))
             key = f"{mat} / {'' if th is None else str(int(th))+'mm'}"
             by_mat[key] = by_mat.get(key, 0) + 1
         st.write("By material/thickness (pieces):", by_mat)
     except Exception:
         pass
+
     if unplaced:
         st.warning("Unplaced items (counts): " + str(dict(unplaced)))
 
-        # Remnants export
+    # Remnants export
     rem_rows = []
     for sid, w, h in remnants:
         if w >= min_remnant_w and h >= min_remnant_h:
@@ -490,7 +503,8 @@ if run_btn:
     else:
         st.info("No remnants meeting the size filter.")
 
-st.subheader("Placements (first 200 rows)")
+    # Placements table & downloads
+    st.subheader("Placements (first 200 rows)")
     rows = []
     # Build lookup for grain lock from parts
     grain_lookup = {p.id: p.grain_locked for p in parts}
@@ -502,14 +516,16 @@ st.subheader("Placements (first 200 rows)")
     st.table([["Piece ID", "Grain Locked", "Sheet ID", "X (mm)", "Y (mm)", "W (mm)", "H (mm)", "Rotated"]] + rows)
 
     csv_text = generate_cutlist_csv(placements)
-    svg_text = generate_svg(placements, sheet_w=(sheets[0].w if sheets else 2440), sheet_h=(sheets[0].h if sheets else 1220))
+    # Use the first sheet dimensions if available for SVG scaling; else defaults
+    first_sheet_w = sheets[0].w if sheets else 2440
+    first_sheet_h = sheets[0].h if sheets else 1220
+    svg_text = generate_svg(placements, sheet_w=first_sheet_w, sheet_h=first_sheet_h)
 
     st.download_button("Download cutlist CSV", csv_text, file_name="cutlist.csv", mime="text/csv")
     st.download_button("Download cutplan SVG", svg_text, file_name="cutplan.svg", mime="image/svg+xml")
 
-    
     # --- Build DataFrames for Excel export ---
-    parts_df = pd.DataFrame([{"id": p.id, "width_mm": p.w, "height_mm": p.h, "qty": p.qty, "grain_locked": p.grain_locked} for p in parts])
+    parts_df = pd.DataFrame([{"id": p.id, "width_mm": p.w, "height_mm": p.h, "qty": p.qty, "grain_locked": p.grain_locked, "material": p.material, "thickness_mm": p.thickness_mm} for p in parts])
     sheets_df = pd.DataFrame([{"id": s.id, "width_mm": s.w, "height_mm": s.h, "qty": s.qty, "material": s.material, "thickness_mm": s.thickness_mm} for s in sheets])
     placements_df = pd.DataFrame([
         {"piece_id": p.piece_id, "sheet_id": p.sheet_id, "x_mm": round(p.x,1), "y_mm": round(p.y,1), "w_mm": round(p.w,1), "h_mm": round(p.h,1), "rotated": p.rotated}
@@ -568,16 +584,15 @@ st.subheader("Placements (first 200 rows)")
             st.warning("Excel engine not available; offering a ZIP of CSVs instead.")
             st.download_button("Download results (ZIP of CSVs)", zip_bio.read(), file_name="cutting_plan_csvs.zip", mime="application/zip")
 
-
     st.subheader("Cut plan preview (SVG)")
     st.components.v1.html(svg_text, height=600, scrolling=True)
     st.markdown(
-    '<div style="margin-top:10px;">'
-    '<span style="display:inline-block;width:20px;height:20px;background-color:lightcoral;margin-right:5px;border:1px solid #000;"></span> Grain-locked (no rotation)'
-    '&nbsp;&nbsp;&nbsp;'
-    '<span style="display:inline-block;width:20px;height:20px;background-color:lightblue;margin-right:5px;border:1px solid #000;"></span> Rotation allowed'
-    '</div>', unsafe_allow_html=True
-)
+        '<div style="margin-top:10px;">'
+        '<span style="display:inline-block;width:20px;height:20px;background-color:lightcoral;margin-right:5px;border:1px solid #000;"></span> Grain-locked (no rotation)'
+        '&nbsp;&nbsp;&nbsp;'
+        '<span style="display:inline-block;width:20px;height:20px;background-color:lightblue;margin-right:5px;border:1px solid #000;"></span> Rotation allowed'
+        '</div>', unsafe_allow_html=True
+    )
 
 st.markdown("---")
 st.markdown("Now supports per-piece grain lock: set `grain_locked` to True in the parts CSV to forbid rotation for that piece.")
