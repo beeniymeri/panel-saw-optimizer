@@ -1,0 +1,5 @@
+id,width_mm,height_mm,qty,grain_locked
+A,800,600,2,True
+B,400,300,6,False
+C,1200,500,1,True
+D,600,400,3,False
